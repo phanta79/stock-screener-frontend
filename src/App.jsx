@@ -137,7 +137,7 @@ function App() {
 
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '1000px', margin: '0 auto' }}>
-      <h1 style={{ textAlign: 'center', color: '#333' }}>📊 다이나믹 퀀트 검색기</h1>
+      <h1 style={{ textAlign: 'center', color: '#333' }}>📊 주식 종목 검색기</h1>
       
       {/* 데이터가 불러와지기 전에는 빈 화면이 찌그러지지 않도록 보호 */}
       {variables.length > 0 && (
