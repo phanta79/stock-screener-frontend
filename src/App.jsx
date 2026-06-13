@@ -2,21 +2,26 @@ import React, { useState, useEffect } from 'react';
 
 function App() {
   const [stocks, setStocks] = useState([]);
-  const [filteredStocks, setFilteredStocks] = useState([]);
-  const [hasSearched, setHasSearched] = useState(false); // 검색 여부 확인용
+  const [displayStocks, setDisplayStocks] = useState([]); // 화면에 띄울 최종 상위 20개 종목
+  const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // A, B, C 변수 설정 상태
-  const [varA, setVarA] = useState('매출액');
-  const [varB, setVarB] = useState('영업이익');
-  const [varC, setVarC] = useState('선택안함');
-  const [formula, setFormula] = useState('');
+  // 사용 가능한 전체 변수 목록 (나중에 100개로 늘어나도 여기만 추가하면 됩니다)
+  const availableFields = ['매출액', '영업이익', '유동비율', '부채비율', '유보율'];
+  const alphabet = ['A', 'B', 'C', 'D', 'E'];
 
-  // 정렬 상태 관리 (어떤 열을, 어떤 방향으로 정렬할지)
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+  // 동적 변수 설정 (기본 A, B 2개부터 시작)
+  const [variables, setVariables] = useState([
+    { id: 'A', field: '부채비율' },
+    { id: 'B', field: '유동비율' }
+  ]);
+  const [formula, setFormula] = useState('(A/B)*100');
 
-  // 👇 렌더(Render) 진짜 주소 꼭 다시 넣어주세요!
+  // 정렬 상태 관리
+  const [sortConfig, setSortConfig] = useState({ key: '_score', direction: 'desc' });
+
+  // 👇 본인의 렌더 백엔드 주소로 반드시 변경하세요!
   const BACKEND_URL = 'https://stock-backend-2dck.onrender.com/api/stocks';
 
   useEffect(() => {
@@ -27,175 +32,187 @@ function App() {
         setLoading(false);
       })
       .catch(err => {
-        console.error("데이터 로드 실패:", err);
+        console.error("데이터 로드 에러:", err);
         setError("서버에서 데이터를 가져오지 못했습니다.");
         setLoading(false);
       });
   }, []);
 
-  // 검색 버튼 클릭 시 로직
+  // 변수 추가/삭제 기능
+  const addVariable = () => {
+    if (variables.length < 5) {
+      setVariables([...variables, { id: alphabet[variables.length], field: availableFields[0] }]);
+    }
+  };
+
+  const removeVariable = () => {
+    if (variables.length > 2) {
+      setVariables(variables.slice(0, -1));
+    }
+  };
+
+  const updateVariable = (index, newField) => {
+    const newVars = [...variables];
+    newVars[index].field = newField;
+    setVariables(newVars);
+  };
+
+  // 검색(계산) 로직
   const handleSearch = () => {
     setError('');
     setHasSearched(true);
-    
-    if (!formula.trim()) {
-      setFilteredStocks(stocks);
-      return;
-    }
+    if (!formula.trim()) return;
 
     try {
-      const filtered = stocks.filter(stock => {
-        let expr = formula;
+      let processed = stocks.map(stock => {
+        let expr = formula.toUpperCase();
         
-        // 사용자가 지정한 A, B, C를 실제 기업의 숫자로 치환
-        if (varA !== '선택안함') expr = expr.split('A').join(stock[varA] || 0);
-        if (varB !== '선택안함') expr = expr.split('B').join(stock[varB] || 0);
-        if (varC !== '선택안함') expr = expr.split('C').join(stock[varC] || 0);
+        // 수식의 A, B, C 등을 실제 기업의 숫자로 치환
+        variables.forEach(v => {
+          const val = stock[v.field] !== undefined ? stock[v.field] : 0;
+          // 정규식으로 정확히 A, B 단어만 찾아 숫자로 바꿈
+          expr = expr.replace(new RegExp(`\\b${v.id}\\b`, 'g'), val);
+        });
 
-        const result = new Function(`return (${expr})`)();
-        return Boolean(result);
+        // 수식 계산 (예: (A/B)*100)
+        let resultVal = new Function(`return (${expr})`)();
+        return { ...stock, _score: resultVal };
       });
 
-      setFilteredStocks(filtered);
-      // 검색 직후에는 기본적으로 종목명 기준 오름차순(또는 변수 A 기준 등) 세팅 가능 (현재는 정렬 유지)
+      // 계산 불가능한 에러 값(NaN, Infinity 등) 걸러내기
+      processed = processed.filter(stock => 
+        typeof stock._score === 'number' && !isNaN(stock._score) && isFinite(stock._score)
+      );
+
+      // 무조건 결과값 기준 내림차순(최고점수 우선) 정렬 후 상위 20개만 컷!
+      processed.sort((a, b) => b._score - a._score);
+      const top20 = processed.slice(0, 20);
+
+      setDisplayStocks(top20);
+      setSortConfig({ key: '_score', direction: 'desc' }); // 정렬 초기화
     } catch (e) {
-      setError("수식에 오류가 있습니다. A, B, C 기호와 연산자를 다시 확인해주세요.");
+      setError("수식에 오류가 있습니다. 괄호, 기호, A~E 변수를 다시 확인해주세요.");
     }
   };
 
-  // 목차(헤더) 클릭 시 정렬하는 함수
+  // 표 헤더 클릭 시 재정렬 (상위 20개 내에서)
   const handleSort = (key) => {
     let direction = 'desc';
-    if (sortConfig.key === key && sortConfig.direction === 'desc') {
-      direction = 'asc';
-    }
+    if (sortConfig.key === key && sortConfig.direction === 'desc') direction = 'asc';
     setSortConfig({ key, direction });
+
+    const sorted = [...displayStocks].sort((a, b) => {
+      const valA = a[key];
+      const valB = b[key];
+
+      if (typeof valA === 'string') return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      return direction === 'asc' ? valA - valB : valB - valA;
+    });
+
+    setDisplayStocks(sorted);
   };
 
-  // 정렬이 적용된 최종 데이터
-  const sortedStocks = [...filteredStocks].sort((a, b) => {
-    if (!sortConfig.key) return 0;
-    const valA = a[sortConfig.key];
-    const valB = b[sortConfig.key];
-
-    // 숫자인 경우와 문자(종목명)인 경우 다르게 비교
-    if (typeof valA === 'string' && typeof valB === 'string') {
-      return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-    } else {
-      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    }
-  });
-
-  // 금액, 비율 예쁘게 포맷팅
-  const formatNumber = (val, key) => {
-    if (key === '종목명') return val;
+  // 보기 좋게 숫자 포맷팅
+  const formatNumber = (val) => {
     if (val === undefined || val === null) return '-';
-    if (key === '유동비율' || key === '부채비율' || key === '유보율') {
-      return `${val.toLocaleString()}%`;
-    }
-    const eok = Math.floor(val / 100000000);
-    if (eok > 0) return `${eok.toLocaleString()} 억`;
-    return `${val.toLocaleString()} 원`;
+    // 결과값(소수점) 처리
+    if (typeof val === 'number' && !Number.isInteger(val)) return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    // 큰 숫자(금액 등) 처리
+    if (val >= 100000000) return `${Math.floor(val / 100000000).toLocaleString()} 억`;
+    return val.toLocaleString();
   };
-
-  // 정렬 아이콘 표시 헬퍼 함수
-  const getSortIcon = (key) => {
-    if (sortConfig.key !== key) return ' ↕';
-    return sortConfig.direction === 'asc' ? ' 🔼' : ' 🔽';
-  };
-
-  const variablesList = ['선택안함', '매출액', '영업이익', '유동비율', '부채비율', '유보율'];
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '900px', margin: '0 auto' }}>
-      <h1 style={{ textAlign: 'center', color: '#333' }}>📊 맞춤형 주식 재무 검색기</h1>
+    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '1000px', margin: '0 auto' }}>
+      <h1 style={{ textAlign: 'center', color: '#333' }}>📊 다이나믹 퀀트 검색기</h1>
       
-      {/* 1. 변수 지정 패널 */}
-      <div style={{ backgroundColor: '#f5f5f5', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd' }}>
-        <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>1️⃣ 검색할 재무 변수 지정</h4>
+      {/* 1. 동적 변수 세팅 패널 */}
+      <div style={{ backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h4 style={{ margin: 0, color: '#333' }}>1️⃣ 변수 할당 (최소 2개 ~ 최대 5개)</h4>
+          <div>
+            <button onClick={removeVariable} disabled={variables.length <= 2} style={{ padding: '5px 10px', marginRight: '5px' }}>- 변수 삭제</button>
+            <button onClick={addVariable} disabled={variables.length >= 5} style={{ padding: '5px 10px' }}>+ 변수 추가</button>
+          </div>
+        </div>
+        
         <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-          <div>
-            <label style={{ fontWeight: 'bold', marginRight: '5px' }}>A = </label>
-            <select value={varA} onChange={(e) => setVarA(e.target.value)} style={{ padding: '5px' }}>
-              {variablesList.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontWeight: 'bold', marginRight: '5px' }}>B = </label>
-            <select value={varB} onChange={(e) => setVarB(e.target.value)} style={{ padding: '5px' }}>
-              {variablesList.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontWeight: 'bold', marginRight: '5px' }}>C = </label>
-            <select value={varC} onChange={(e) => setVarC(e.target.value)} style={{ padding: '5px' }}>
-              {variablesList.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
+          {variables.map((v, idx) => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+              <strong style={{ color: '#0070f3', fontSize: '16px', marginRight: '8px' }}>{v.id} = </strong>
+              <select value={v.field} onChange={(e) => updateVariable(idx, e.target.value)} style={{ padding: '5px', border: 'none', outline: 'none' }}>
+                {availableFields.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* 2. 수식 입력 및 검색 패널 */}
+      {/* 2. 수식 입력창 */}
       <div style={{ marginBottom: '25px' }}>
-        <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>2️⃣ 수식 입력</h4>
+        <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>2️⃣ 수식 입력 (점수 산출)</h4>
         <div style={{ display: 'flex', gap: '10px' }}>
           <input
             type="text"
             value={formula}
             onChange={(e) => setFormula(e.target.value)}
-            placeholder="예시: A > 500000000000 && B > 100000000"
-            style={{ flex: 1, padding: '12px', fontSize: '15px', borderRadius: '6px', border: '1px solid #ccc' }}
+            placeholder="예: (A / B) * 100"
+            style={{ flex: 1, padding: '12px', fontSize: '18px', borderRadius: '6px', border: '1px solid #ccc', fontWeight: 'bold' }}
           />
           <button
             onClick={handleSearch}
             style={{ padding: '12px 24px', fontSize: '15px', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
           >
-            검색
+            점수 계산 및 랭킹 조회
           </button>
-        </div>
-        <div style={{ fontSize: '13px', color: '#666', marginTop: '8px' }}>
-          * 단일 조건 예시: <code>A &gt; 100</code> (A가 100 초과) <br/>
-          * 복합 조건 예시: <code>A &lt; 50 && B &gt; 200</code> (A가 50 미만이면서 B가 200 초과)
         </div>
       </div>
 
-      {error && <p style={{ color: '#ff0000', fontWeight: 'bold', marginBottom: '15px' }}>⚠️ {error}</p>}
-      {loading && <p style={{ textAlign: 'center', padding: '20px' }}>서버 연동 중입니다... ⏳</p>}
+      {error && <p style={{ color: '#ff0000', fontWeight: 'bold' }}>⚠️ {error}</p>}
+      {loading && <p style={{ textAlign: 'center', padding: '20px' }}>데이터를 불러오는 중입니다... ⏳</p>}
 
-      {/* 3. 결과 테이블 (검색 버튼을 눌러야만 표시됨) */}
+      {/* 3. 동적 결과 테이블 (검색 후, 상위 20개만 렌더링) */}
       {!loading && hasSearched && (
-        <div style={{ overflowX: 'auto' }}>
-          <h4 style={{ margin: '0 0 10px 0', color: '#0070f3' }}>💡 조회 결과 (목차를 클릭하면 정렬됩니다)</h4>
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+        <div style={{ overflowX: 'auto', marginTop: '20px' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#0070f3' }}>🏆 상위 랭킹 (Top 20)</h4>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center' }}>
             <thead>
               <tr style={{ backgroundColor: '#0070f3', color: 'white', borderBottom: '2px solid #0051b3' }}>
-                {['종목명', '매출액', '영업이익', '유동비율', '부채비율', '유보율'].map((key) => (
-                  <th 
-                    key={key} 
-                    onClick={() => handleSort(key)}
-                    style={{ padding: '12px', border: '1px solid #ddd', cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    {key}{getSortIcon(key)}
+                <th onClick={() => handleSort('name')} style={{ padding: '12px', border: '1px solid #ddd', cursor: 'pointer' }}>
+                  종목명 {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '🔼' : '🔽') : '↕'}
+                </th>
+                
+                {/* 내가 설정한 변수들만 열(Column)로 출력 */}
+                {variables.map(v => (
+                  <th key={v.id} onClick={() => handleSort(v.field)} style={{ padding: '12px', border: '1px solid #ddd', cursor: 'pointer' }}>
+                    {v.id} ({v.field}) {sortConfig.key === v.field ? (sortConfig.direction === 'asc' ? '🔼' : '🔽') : '↕'}
                   </th>
                 ))}
+                
+                <th onClick={() => handleSort('_score')} style={{ padding: '12px', border: '1px solid #ddd', cursor: 'pointer', backgroundColor: '#0051b3' }}>
+                  결과값 {sortConfig.key === '_score' ? (sortConfig.direction === 'asc' ? '🔼' : '🔽') : '↕'}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {sortedStocks.length === 0 ? (
-                <tr>
-                  <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#777' }}>조건에 일치하는 기업이 없습니다.</td>
-                </tr>
+              {displayStocks.length === 0 ? (
+                <tr><td colSpan={variables.length + 2} style={{ padding: '30px', color: '#777' }}>계산 결과가 없습니다.</td></tr>
               ) : (
-                sortedStocks.map((stock, idx) => (
+                displayStocks.map((stock, idx) => (
                   <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#fcfcfc' }}>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold', textAlign: 'center', backgroundColor: '#f5f9ff' }}>{stock.name}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock['매출액'], '매출액')}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock['영업이익'], '영업이익')}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock['유동비율'], '유동비율')}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock['부채비율'], '부채비율')}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock['유보율'], '유보율')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold' }}>{stock.name}</td>
+                    
+                    {/* 설정한 변수 A, B, C 에 해당하는 기업의 실제 숫자 데이터 출력 */}
+                    {variables.map(v => (
+                      <td key={v.id} style={{ padding: '12px', border: '1px solid #ddd' }}>
+                        {formatNumber(stock[v.field])}
+                      </td>
+                    ))}
+                    
+                    {/* 수식 최종 결과값 출력 */}
+                    <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold', color: '#0070f3' }}>
+                      {formatNumber(stock._score)}
+                    </td>
                   </tr>
                 ))
               )}
