@@ -7,18 +7,16 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const availableFields = ['매출액', '영업이익', '유동비율', '부채비율', '유보율'];
+  // 💡 고정되어 있던 변수 목록을 지우고, 빈 배열로 둡니다. (서버에서 가져올 예정)
+  const [availableFields, setAvailableFields] = useState([]);
   const alphabet = ['A', 'B', 'C', 'D', 'E'];
 
-  const [variables, setVariables] = useState([
-    { id: 'A', field: '매출액' },
-    { id: 'B', field: '영업이익' }
-  ]);
-  const [formula, setFormula] = useState('A - B');
+  const [variables, setVariables] = useState([]);
+  const [formula, setFormula] = useState('');
 
   const [sortConfig, setSortConfig] = useState({ key: '_score', direction: 'desc' });
 
-  // 👇 렌더 백엔드 주소 꼭 확인하세요!
+  // 👇 본인의 렌더 백엔드 주소로 반드시 변경하세요!
   const BACKEND_URL = 'https://stock-backend-2dck.onrender.com/api/stocks';
 
   useEffect(() => {
@@ -26,6 +24,20 @@ function App() {
       .then(res => res.json())
       .then(data => {
         setStocks(data);
+        if (data.length > 0) {
+          // 💡 핵심 마법: 몽고DB 시스템 코드(_id, __v)와 이름(name)을 제외한 '모든 진짜 재무 변수명'을 자동 추출합니다!
+          const fields = Object.keys(data[0]).filter(k => k !== '_id' && k !== 'name' && k !== '__v');
+          setAvailableFields(fields);
+
+          // 데이터가 있으면 자동으로 A, B 변수 기본 세팅
+          if (fields.length > 0) {
+            setVariables([
+              { id: 'A', field: fields[0] },
+              { id: 'B', field: fields[1] || fields[0] }
+            ]);
+            setFormula('A - B');
+          }
+        }
         setLoading(false);
       })
       .catch(err => {
@@ -36,7 +48,7 @@ function App() {
   }, []);
 
   const addVariable = () => {
-    if (variables.length < 5) {
+    if (variables.length < 5 && availableFields.length > 0) {
       setVariables([...variables, { id: alphabet[variables.length], field: availableFields[0] }]);
     }
   };
@@ -101,11 +113,11 @@ function App() {
     setDisplayStocks(sorted);
   };
 
-  // 💡 핵심 업데이트: 어떤 브라우저에서도 무조건 3자리 콤마(ko-KR) 보장
   const formatNumber = (val, fieldName) => {
     if (val === undefined || val === null) return '-';
 
-    if (fieldName === '유동비율' || fieldName === '부채비율' || fieldName === '유보율') {
+    // 이름에 '비율'이나 '율'이 들어가면 자동으로 % 처리
+    if (fieldName && (fieldName.includes('비율') || fieldName.includes('율'))) {
       return `${Number(val).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
     }
 
@@ -127,48 +139,54 @@ function App() {
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '1000px', margin: '0 auto' }}>
       <h1 style={{ textAlign: 'center', color: '#333' }}>📊 다이나믹 퀀트 검색기</h1>
       
-      <div style={{ backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-          <h4 style={{ margin: 0, color: '#333' }}>1️⃣ 변수 할당 (최소 2개 ~ 최대 5개)</h4>
-          <div>
-            <button onClick={removeVariable} disabled={variables.length <= 2} style={{ padding: '5px 10px', marginRight: '5px' }}>- 변수 삭제</button>
-            <button onClick={addVariable} disabled={variables.length >= 5} style={{ padding: '5px 10px' }}>+ 변수 추가</button>
-          </div>
-        </div>
-        
-        <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-          {variables.map((v, idx) => (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-              <strong style={{ color: '#0070f3', fontSize: '16px', marginRight: '8px' }}>{v.id} = </strong>
-              <select value={v.field} onChange={(e) => updateVariable(idx, e.target.value)} style={{ padding: '5px', border: 'none', outline: 'none' }}>
-                {availableFields.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
+      {/* 데이터가 불러와지기 전에는 빈 화면이 찌그러지지 않도록 보호 */}
+      {variables.length > 0 && (
+        <>
+          <div style={{ backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+              <h4 style={{ margin: 0, color: '#333' }}>1️⃣ 변수 할당 (최소 2개 ~ 최대 5개)</h4>
+              <div>
+                <button onClick={removeVariable} disabled={variables.length <= 2} style={{ padding: '5px 10px', marginRight: '5px' }}>- 변수 삭제</button>
+                <button onClick={addVariable} disabled={variables.length >= 5} style={{ padding: '5px 10px' }}>+ 변수 추가</button>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
+            
+            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+              {variables.map((v, idx) => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                  <strong style={{ color: '#0070f3', fontSize: '16px', marginRight: '8px' }}>{v.id} = </strong>
+                  <select value={v.field} onChange={(e) => updateVariable(idx, e.target.value)} style={{ padding: '5px', border: 'none', outline: 'none' }}>
+                    {availableFields.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
 
-      <div style={{ marginBottom: '25px' }}>
-        <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>2️⃣ 수식 입력 (점수 산출)</h4>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <input
-            type="text"
-            value={formula}
-            onChange={(e) => setFormula(e.target.value)}
-            placeholder="예: (A / B) * 100"
-            style={{ flex: 1, padding: '12px', fontSize: '18px', borderRadius: '6px', border: '1px solid #ccc', fontWeight: 'bold' }}
-          />
-          <button
-            onClick={handleSearch}
-            style={{ padding: '12px 24px', fontSize: '15px', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-          >
-            점수 계산 및 랭킹 조회
-          </button>
-        </div>
-      </div>
+          <div style={{ marginBottom: '25px' }}>
+            <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>2️⃣ 수식 입력 (점수 산출)</h4>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <input
+                type="text"
+                value={formula}
+                onChange={(e) => setFormula(e.target.value)}
+                placeholder="예: (A / B) * 100"
+                style={{ flex: 1, padding: '12px', fontSize: '18px', borderRadius: '6px', border: '1px solid #ccc', fontWeight: 'bold' }}
+              />
+              <button
+                onClick={handleSearch}
+                style={{ padding: '12px 24px', fontSize: '15px', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                점수 계산 및 랭킹 조회
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {error && <p style={{ color: '#ff0000', fontWeight: 'bold' }}>⚠️ {error}</p>}
-      {loading && <p style={{ textAlign: 'center', padding: '20px' }}>데이터를 불러오는 중입니다... ⏳</p>}
+      {loading && <p style={{ textAlign: 'center', padding: '20px' }}>몽고DB에서 데이터를 불러오는 중입니다... ⏳</p>}
+      {!loading && availableFields.length === 0 && <p style={{ textAlign: 'center', padding: '20px', color: '#777' }}>데이터가 비어있습니다. 수집기(updateData.js)를 실행해주세요!</p>}
 
       {!loading && hasSearched && (
         <div style={{ overflowX: 'auto', marginTop: '20px' }}>
