@@ -1,160 +1,139 @@
-import { useState, useEffect } from 'react';
-import * as math from 'mathjs';
-import './App.css';
-
-// 선택 가능한 재무 항목 리스트
-const variableOptions = [
-  { value: 'opProfit_25', label: '25년 영업이익' },
-  { value: 'netIncome_25', label: '25년 당기순이익' },
-  { value: 'totalAssets', label: '자산총계' },
-  { value: 'currentLiabilities', label: '유동부채' },
-];
+import React, { useState, useEffect } from 'react';
 
 function App() {
-  const [stockData, setStockData] = useState([]); // 백엔드에서 받아올 데이터를 저장할 공간
-  const [variables, setVariables] = useState([
-    { id: 'A', key: 'opProfit_25' },
-    { id: 'B', key: 'totalAssets' }
-  ]);
-  const [formula, setFormula] = useState("(A / B) * 100");
-  const [results, setResults] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [stocks, setStocks] = useState([]);
+  const [filteredStocks, setFilteredStocks] = useState([]);
+  const [formula, setFormula] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  // 화면이 켜질 때 백엔드 서버(5000번 포트)에 데이터 요청하기
+  // 👇 렌더(Render) 대시보드에서 복사했던 본인의 백엔드 주소로 변경하세요! (끝에 /api/stocks 필수)
+  const BACKEND_URL = 'https://stock-backend-2dck.onrender.com/api/stocks';
+
+  // 페이지가 열리면 백엔드 서버에서 데이터를 가져옵니다.
   useEffect(() => {
-    fetch('https://stock-backend-2dck.onrender.com/api/stocks')
-      .then(response => response.json())
+    fetch(BACKEND_URL)
+      .then(res => res.json())
       .then(data => {
-        // 백엔드가 배열로 주므로 그대로 저장
-        setStockData(data);
-        setIsLoading(false);
+        setStocks(data);
+        setFilteredStocks(data);
+        setLoading(false);
       })
-      .catch(error => {
-        console.error("데이터 가져오기 실패:", error);
-        setIsLoading(false);
+      .catch(err => {
+        console.error("데이터 로드 실패:", err);
+        setError("백엔드 서버에서 데이터를 가져오지 못했습니다.");
+        setLoading(false);
       });
   }, []);
 
-  const handleAddVariable = () => { /* 이전과 동일 */
-    if (variables.length >= 5) return;
-    const nextId = String.fromCharCode(65 + variables.length); 
-    setVariables([...variables, { id: nextId, key: variableOptions[0].value }]);
-  };
-
-  const handleRemoveVariable = (idToRemove) => { /* 이전과 동일 */
-    if (variables.length <= 2) return;
-    setVariables(variables.filter(v => v.id !== idToRemove));
-  };
-
-  const handleVariableChange = (id, newKey) => { /* 이전과 동일 */
-    setVariables(variables.map(v => v.id === id ? { ...v, key: newKey } : v));
-  };
-
+  // 검색 버튼을 누르면 실행되는 수식 필터링 로직
   const handleSearch = () => {
-    try {
-      const calculatedData = stockData.map(company => {
-        const scope = {};
-        const displayValues = {};
+    setError('');
+    if (!formula.trim()) {
+      setFilteredStocks(stocks);
+      return;
+    }
 
+    try {
+      const filtered = stocks.filter(stock => {
+        let expr = formula;
+        // 새로 세팅한 5가지 핵심 변수 목록
+        const variables = ['매출액', '영업이익', '유동비율', '부채비율', '유보율'];
+        
+        // 사용자가 입력한 수식 문자열에서 변수 이름을 실제 숫자 값으로 치환합니다.
         variables.forEach(v => {
-          scope[v.id] = company[v.key];
-          displayValues[`val_${v.id}`] = company[v.key];
+          const val = stock[v] !== undefined ? stock[v] : 0;
+          expr = expr.split(v).join(val);
         });
 
-        const resultValue = math.evaluate(formula, scope);
-
-        return {
-          ...company,
-          ...displayValues,
-          resultValue: parseFloat(resultValue.toFixed(1))
-        };
+        // 치환된 수식을 계산하여 참(true)인 기업만 남깁니다.
+        const result = new Function(`return (${expr})`)();
+        return Boolean(result);
       });
 
-      const sortedData = calculatedData.sort((a, b) => b.resultValue - a.resultValue);
-      setResults(sortedData);
-    } catch (error) {
-      alert("수식에 오류가 있습니다.");
+      setFilteredStocks(filtered);
+    } catch (e) {
+      setError("수식에 오류가 있습니다. 변수명과 기호(<, >, ==, &&, ||)를 다시 확인해주세요.");
     }
   };
 
-  const getLabel = (key) => {
-    const option = variableOptions.find(opt => opt.value === key);
-    return option ? option.label : key;
+  // 대형 숫자를 보기 편하게 만 만원 또는 억 단위로 변환해 주는 함수
+  const formatNumber = (val, key) => {
+    if (key === '유동비율' || key === '부채비율' || key === '유보율') {
+      return `${val.toLocaleString()}%`;
+    }
+    const eok = Math.floor(val / 100000000);
+    if (eok > 0) {
+      return `${eok.toLocaleString()} 억 원`;
+    }
+    return `${val.toLocaleString()} 원`;
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '900px', margin: '0 auto' }}>
-      <h2>주식 재무 조건 검색기</h2>
+    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '900px', margin: '0 auto' }}>
+      <h1 style={{ textAlign: 'center', color: '#333' }}>📊 주식 재무 조건 검색기</h1>
       
-      {isLoading ? (
-        <p>백엔드에서 실제 데이터를 불러오는 중입니다... ⏳</p>
-      ) : (
-        <>
-          <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#fafafa' }}>
-            <div style={{ marginBottom: '15px' }}>
-              <h4 style={{ margin: '0 0 10px 0' }}>변수 설정</h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-                {variables.map((v) => (
-                  <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: '#fff', padding: '5px 10px', border: '1px solid #ddd', borderRadius: '4px' }}>
-                    <strong>{v.id} : </strong>
-                    <select value={v.key} onChange={(e) => handleVariableChange(v.id, e.target.value)} style={{ padding: '5px' }}>
-                      {variableOptions.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    {variables.length > 2 && v.id !== 'A' && v.id !== 'B' && (
-                      <button onClick={() => handleRemoveVariable(v.id)} style={{ cursor: 'pointer', color: 'red', border: 'none', background: 'none', fontWeight: 'bold' }}>X</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {variables.length < 5 && (
-                <button onClick={handleAddVariable} style={{ marginTop: '10px', padding: '6px 12px', cursor: 'pointer' }}>+ 변수 추가</button>
-              )}
-            </div>
+      <div style={{ backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #eee' }}>
+        <h4 style={{ margin: '0 0 10px 0', color: '#0070f3' }}>💡 사용 가능한 재무 변수</h4>
+        <p style={{ fontWeight: 'bold', fontSize: '16px', margin: '0 0 10px 0' }}>매출액, 영업이익, 유동비율, 부채비율, 유보율</p>
+        <div style={{ fontSize: '13px', color: '#666', lineHeight: '1.6' }}>
+          * 예시 1 (단일 조건): <code>영업이익 &gt; 100000000000</code> (영업이익 1,000억 초과인 기업)<br />
+          * 예시 2 (복합 조건): <code>부채비율 &lt; 100 && 유동비율 &gt; 150</code> (부채 100% 미만이고 유동비율 150% 초과인 기업)
+        </div>
+      </div>
 
-            <hr style={{ border: '0', borderTop: '1px solid #ddd', margin: '15px 0' }} />
+      <div style={{ marginBottom: '25px', display: 'flex', gap: '10px' }}>
+        <input
+          type="text"
+          value={formula}
+          onChange={(e) => setFormula(e.target.value)}
+          placeholder="수식을 입력하세요 (예: 매출액 > 500000000000)"
+          style={{ flex: 1, padding: '12px', fontSize: '15px', borderRadius: '6px', border: '1px solid #ccc' }}
+        />
+        <button
+          onClick={handleSearch}
+          style={{ padding: '12px 24px', fontSize: '15px', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+        >
+          검색
+        </button>
+      </div>
 
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <strong style={{ whiteSpace: 'nowrap' }}>수식 :</strong>
-              <input 
-                type="text" 
-                value={formula} 
-                onChange={(e) => setFormula(e.target.value)} 
-                style={{ width: '100%', padding: '8px', fontSize: '16px' }}
-              />
-              <button onClick={handleSearch} style={{ padding: '8px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px' }}>검색</button>
-            </div>
-          </div>
+      {error && <p style={{ color: '#ff0000', fontWeight: 'bold', marginBottom: '15px' }}>⚠️ {error}</p>}
+      {loading && <p style={{ textAlign: 'center', padding: '20px' }}>데이터를 불러오는 중입니다... ⏳</p>}
 
-          {results.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f4f4f4', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '10px' }}>종목</th>
-                  {variables.map(v => (
-                    <th key={v.id} style={{ padding: '10px' }}>
-                      {v.id}<br/>
-                      <span style={{fontSize: '11px', fontWeight: 'normal'}}>{getLabel(v.key)}</span>
-                    </th>
-                  ))}
-                  <th style={{ padding: '10px', backgroundColor: '#ffebee' }}>결과값</th>
+      {!loading && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#0070f3', color: 'white', borderBottom: '2px solid #0051b3' }}>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>종목명</th>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>매출액</th>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>영업이익</th>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>유동비율</th>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>부채비율</th>
+                <th style={{ padding: '12px', border: '1px solid #ddd' }}>유보율</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStocks.length === 0 ? (
+                <tr>
+                  <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#777' }}>조건에 일치하는 기업이 없습니다.</td>
                 </tr>
-              </thead>
-              <tbody>
-                {results.map((item) => (
-                  <tr key={item.id} style={{ borderBottom: '1px solid #ddd' }}>
-                    <td style={{ padding: '10px', fontWeight: 'bold' }}>{item.name}</td>
-                    {variables.map(v => (
-                      <td key={v.id} style={{ padding: '10px' }}>{item[`val_${v.id}`]}</td>
-                    ))}
-                    <td style={{ padding: '10px', fontWeight: 'bold', color: '#d32f2f' }}>{item.resultValue}</td>
+              ) : (
+                filteredStocks.map((stock, idx) => (
+                  <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#fcfcfc' }}>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold', textAlign: 'center', backgroundColor: '#f5f9ff' }}>{stock.name}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock.매출액, '매출액')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock.영업이익, '영업이익')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock.유동비율, '유동비율')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock.부채비율, '부채비율')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>{formatNumber(stock.유보율, '유보율')}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
